@@ -1,0 +1,12 @@
+# Netlify site config for @cedarce/admin.
+# Site "Base directory" (or CLI --filter) = apps/admin. Install runs here; pnpm resolves the workspace root above.
+[build]
+  command = "pnpm run build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "22"
+  PNPM_FLAGS = "--frozen-lockfile"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"

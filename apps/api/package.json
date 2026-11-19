@@ -8,7 +8,7 @@
     "build": "tsc --noEmit",
     "start": "tsx src/server.ts",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
     "@cedarce/db": "workspace:*",

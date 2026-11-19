@@ -27,7 +27,7 @@ Phases are sequential for one engineer. Each phase ends with something a custome
 - cars.cedarce.com: home, grid + filters, detail with landed-cost estimator and WhatsApp CTA, how-it-works, fees, FAQ.
 - Leads: `POST /v1/leads` + admin leads list with status.
 - Monitoring: Sentry, uptime, stale-sync alert to WhatsApp/email.
-- Deploy: Vercel (web), VPS (api+worker), managed Postgres, R2.
+- Deploy: Netlify (web), VPS (api+worker), managed Postgres, R2.
 
 **Exit criteria:** a stranger can find a car, see a landed-cost estimate, start a WhatsApp chat, and ops can see that lead in admin. Sold cars disappear within an hour.
 

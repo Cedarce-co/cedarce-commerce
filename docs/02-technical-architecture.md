@@ -35,7 +35,7 @@ One backend, one database, one worker fleet, three frontends. The two storefront
 | Images           | Mirror to S3-compatible storage (Cloudflare R2), serve via CDN                                              | Never hotlink source images; needed for licensing and speed                     |
 | Auth             | Admin only: email + password, Argon2, session cookies. Public sites have no login in v1                     | No online payments means no customer accounts needed yet                        |
 | Messaging        | WhatsApp deep links (`wa.me`) in v1; WhatsApp Cloud API in phase 3                                          | Zero cost to start                                                              |
-| Hosting          | Frontends on Vercel; API + worker + Redis on one VPS (Docker Compose); managed Postgres (Neon/Supabase/RDS) | Cheap, boring                                                                   |
+| Hosting          | Frontends on Netlify (one site per app); API + worker + Redis on one VPS (Docker Compose); managed Postgres (Neon/Supabase/RDS) | Cheap, boring                                                                   |
 | Observability    | Pino logs, Sentry, uptime check on `/health` and on "last successful sync"                                  | Stale catalogue is the main failure mode                                        |
 
 ## Monorepo layout
