@@ -1,0 +1,342 @@
+// Cedarce Commerce — single schema shared by cars.cedarce.com, gadgets.cedarce.com and admin.
+// `vertical` is explicit on every business row so one backend can serve both brands.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Vertical {
+  CARS
+  GADGETS
+}
+
+enum ListingStatus {
+  ACTIVE   // visible if it passes filter rules
+  SOLD     // source reports sold / buy-now gone
+  REMOVED  // not seen at source for > 48h
+  HIDDEN   // admin override
+}
+
+enum SaleType {
+  BUY_NOW
+  AUCTION   // ingested only for audit; never displayed
+}
+
+enum TitleType {
+  CLEAN
+  SALVAGE
+  REBUILT
+  OTHER
+}
+
+enum ProductCategory {
+  PHONE
+  LAPTOP
+  TABLET
+  ACCESSORY
+}
+
+enum ProductCondition {
+  NEW
+  RENEWED
+  USED
+}
+
+enum RuleKind {
+  INCLUDE
+  EXCLUDE
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUOTED
+  WON
+  LOST
+}
+
+enum OrderStage {
+  QUOTE
+  PAID
+  PURCHASED
+  IN_TRANSIT
+  AT_PORT
+  CLEARED
+  DELIVERED
+  CANCELLED
+}
+
+enum SyncKind {
+  DISCOVER
+  REFRESH
+}
+
+enum SyncStatus {
+  RUNNING
+  SUCCESS
+  FAILED
+}
+
+enum AdminRole {
+  OWNER
+  OPS
+  VIEWER
+}
+
+/// A configured upstream feed (licensed auction API, AuctionExport partner feed, product API, CSV).
+model Source {
+  id               String    @id @default(cuid())
+  key              String    @unique // "auction-api" | "auctionexport" | "amazon-product-api" | "csv"
+  name             String
+  vertical         Vertical
+  enabled          Boolean   @default(true)
+  discoverCron     String    @default("0 */4 * * *")
+  refreshCron      String    @default("*/30 * * * *")
+  config           Json      @default("{}") // non-secret adapter config; secrets live in env
+  lastDiscoverAt   DateTime?
+  lastRefreshAt    DateTime?
+  listings         Listing[]
+  syncRuns         SyncRun[]
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+}
+
+model Listing {
+  id               String        @id @default(cuid())
+  vertical         Vertical
+  sourceId         String
+  source           Source        @relation(fields: [sourceId], references: [id])
+  sourceListingId  String
+  sourceUrl        String?
+  slug             String        @unique
+  title            String
+  status           ListingStatus @default(ACTIVE)
+  saleType         SaleType      @default(BUY_NOW)
+  sourcePriceUsd   Decimal       @db.Decimal(12, 2)
+  displayPriceUsd  Decimal       @db.Decimal(12, 2)
+  priceComputedAt  DateTime      @default(now())
+  featured         Boolean       @default(false)
+  adminNote        String?
+  contentHash      String        // hash of raw payload; skip no-op updates
+  firstSeenAt      DateTime      @default(now())
+  lastSeenAt       DateTime      @default(now())
+  removedAt        DateTime?
+  attributes       Json          @default("{}") // raw/extra source attributes
+  vehicle          Vehicle?
+  product          Product?
+  images           Image[]
+  leads            Lead[]
+  orders           Order[]
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  @@unique([sourceId, sourceListingId])
+  @@index([vertical, status, displayPriceUsd])
+  @@index([vertical, status, featured])
+  @@index([lastSeenAt])
+}
+
+model Vehicle {
+  listingId        String     @id
+  listing          Listing    @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  make             String
+  model            String
+  year             Int
+  trim             String?
+  bodyStyle        String?
+  fuel             String?
+  transmission     String?
+  drive            String?
+  engine           String?
+  color            String?
+  odometer         Int?
+  odometerUnit     String?    @default("mi")
+  vin              String?
+  lotNumber        String?
+  auctionHouse     String?    // Copart | IAAI | dealer
+  locationState    String?
+  locationCountry  String?    @default("US")
+  titleType        TitleType  @default(OTHER)
+  primaryDamage    String?
+  secondaryDamage  String?
+  runAndDrive      Boolean?
+  keys             Boolean?
+  estAuctionFeeUsd Decimal?   @db.Decimal(10, 2)
+
+  @@index([make, model, year])
+  @@index([vin])
+}
+
+model Product {
+  listingId     String           @id
+  listing       Listing          @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  category      ProductCategory
+  brand         String
+  model         String
+  asin          String?
+  condition     ProductCondition @default(NEW)
+  rating        Decimal?         @db.Decimal(3, 2)
+  reviewCount   Int?
+  weightKg      Decimal?         @db.Decimal(6, 2)
+  dimensionsCm  Json?            // {l,w,h}
+  specs         Json             @default("{}")
+  inStock       Boolean          @default(true)
+
+  @@index([category, brand])
+  @@index([asin])
+}
+
+model Image {
+  id         String  @id @default(cuid())
+  listingId  String
+  listing    Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  sourceUrl  String
+  cdnUrl     String?
+  position   Int     @default(0)
+  width      Int?
+  height     Int?
+
+  @@index([listingId, position])
+}
+
+/// Admin-defined visibility rules. Shown = matches >=1 INCLUDE and 0 EXCLUDE.
+model FilterRule {
+  id        String   @id @default(cuid())
+  vertical  Vertical
+  name      String
+  kind      RuleKind
+  criteria  Json     // see docs/06-admin-filters-and-pricing.md
+  priority  Int      @default(0)
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([vertical, enabled])
+}
+
+/// Fee lines and margins used for displayPrice and the landed-cost estimator.
+model PricingRule {
+  id        String   @id @default(cuid())
+  vertical  Vertical
+  name      String
+  criteria  Json     @default("{}") // e.g. {"category":"PHONE"} or {"bodyStyle":"SUV"}
+  lines     Json     // [{"key":"agencyFee","type":"TIERED"|"PERCENT"|"FIXED", ...}]
+  priority  Int      @default(0)
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([vertical, enabled])
+}
+
+model FxRate {
+  id        String   @id @default(cuid())
+  base      String   @default("USD")
+  quote     String   // NGN | GHS
+  rate      Decimal  @db.Decimal(14, 6)
+  fetchedAt DateTime @default(now())
+
+  @@index([quote, fetchedAt])
+}
+
+model Lead {
+  id          String     @id @default(cuid())
+  vertical    Vertical
+  listingId   String?
+  listing     Listing?   @relation(fields: [listingId], references: [id])
+  name        String
+  phone       String     // E.164, WhatsApp number
+  email       String?
+  country     String?    // NG | GH
+  city        String?
+  message     String?
+  status      LeadStatus @default(NEW)
+  assigneeId  String?
+  assignee    AdminUser? @relation(fields: [assigneeId], references: [id])
+  utmSource   String?
+  utmCampaign String?
+  orders      Order[]
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@index([vertical, status, createdAt])
+  @@index([phone])
+}
+
+model Order {
+  id              String       @id @default(cuid())
+  vertical        Vertical
+  leadId          String
+  lead            Lead         @relation(fields: [leadId], references: [id])
+  listingId       String?
+  listing         Listing?     @relation(fields: [listingId], references: [id])
+  stage           OrderStage   @default(QUOTE)
+  destination     String       // NG | GH
+  quote           Json         // full breakdown from the estimator at quote time
+  totalUsd        Decimal      @db.Decimal(12, 2)
+  totalLocal      Decimal      @db.Decimal(14, 2)
+  localCurrency   String       // NGN | GHS
+  fxRateUsed      Decimal      @db.Decimal(14, 6)
+  quoteExpiresAt  DateTime
+  paidAt          DateTime?
+  purchasedAt     DateTime?
+  deliveredAt     DateTime?
+  externalRefs    Json         @default("{}") // auction invoice, Amazon order no, BoL, AWB, vessel
+  trackingToken   String       @unique @default(cuid())
+  notes           String?
+  events          OrderEvent[]
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([vertical, stage, updatedAt])
+}
+
+model OrderEvent {
+  id         String     @id @default(cuid())
+  orderId    String
+  order      Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  stage      OrderStage
+  note       String?
+  attachment String?    // storage key of receipt/BoL/etc
+  createdBy  String?
+  createdAt  DateTime   @default(now())
+
+  @@index([orderId, createdAt])
+}
+
+model SyncRun {
+  id         String     @id @default(cuid())
+  sourceId   String
+  source     Source     @relation(fields: [sourceId], references: [id])
+  kind       SyncKind
+  status     SyncStatus @default(RUNNING)
+  startedAt  DateTime   @default(now())
+  finishedAt DateTime?
+  stats      Json       @default("{}") // {seen,new,updated,sold,removed,errors}
+  error      String?
+
+  @@index([sourceId, kind, startedAt])
+}
+
+model AdminUser {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String
+  passwordHash String
+  role         AdminRole @default(OPS)
+  active       Boolean   @default(true)
+  leads        Lead[]
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+model Setting {
+  key       String   @id // e.g. "whatsapp.number", "destination.NG.maxVehicleAgeYears"
+  value     Json
+  updatedAt DateTime @updatedAt
+}

@@ -1,0 +1,23 @@
+# Production: one VPS runs api + worker + redis behind Caddy. Postgres is managed (Neon/Supabase/RDS).
+services:
+  caddy:
+    image: caddy:2-alpine
+    ports: ["80:80", "443:443"]
+    volumes: ["./Caddyfile:/etc/caddy/Caddyfile", "caddy_data:/data"]
+    depends_on: [api]
+  api:
+    build: { context: .., dockerfile: infra/Dockerfile, args: { APP: api } }
+    env_file: ../.env
+    restart: unless-stopped
+  worker:
+    build: { context: .., dockerfile: infra/Dockerfile, args: { APP: worker } }
+    env_file: ../.env
+    restart: unless-stopped
+    depends_on: [redis]
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes: ["redisdata:/data"]
+volumes:
+  caddy_data:
+  redisdata:
